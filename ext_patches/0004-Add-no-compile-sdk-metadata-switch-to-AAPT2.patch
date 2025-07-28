@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alan Viverette <alanv@google.com>
+Date: Tue, 2 May 2023 16:34:27 -0400
+Subject: [PATCH 4/7] Add --no-compile-sdk-metadata switch to AAPT2
+
+This switch suppresses output of compile SDK-related attributes
+in AndroidManifest.xml, including android:compileSdkVersion and
+platformBuildVersion.
+
+Fixes: 278115511
+Test: ManifestFixer_test
+Merged-In: I552e50802a328c2318c9f261e30beadcbca5fd29
+Change-Id: I552e50802a328c2318c9f261e30beadcbca5fd29
+---
+ tools/aapt2/cmd/Link.h                  |  5 +++++
+ tools/aapt2/link/ManifestFixer.cpp      |  5 ++---
+ tools/aapt2/link/ManifestFixer.h        |  8 +++++--
+ tools/aapt2/link/ManifestFixer_test.cpp | 29 +++++++++++++++++++++++++
+ 4 files changed, 42 insertions(+), 5 deletions(-)
+
+diff --git a/tools/aapt2/cmd/Link.h b/tools/aapt2/cmd/Link.h
+index de90485787d0..ec83057ea2fa 100644
+--- a/tools/aapt2/cmd/Link.h
++++ b/tools/aapt2/cmd/Link.h
+@@ -207,6 +207,11 @@ class LinkCommand : public Command {
+     AddOptionalFlag("--compile-sdk-version-name",
+         "Version name to inject into the AndroidManifest.xml if none is present.",
+         &options_.manifest_fixer_options.compile_sdk_version_codename);
++    AddOptionalSwitch(
++        "--no-compile-sdk-metadata",
++        "Suppresses output of compile SDK-related attributes in AndroidManifest.xml,\n"
++        "including android:compileSdkVersion and platformBuildVersion.",
++        &options_.manifest_fixer_options.no_compile_sdk_metadata);
+     AddOptionalSwitch("--shared-lib", "Generates a shared Android runtime library.",
+         &shared_lib_);
+     AddOptionalSwitch("--static-lib", "Generate a static Android library.", &static_lib_);
+diff --git a/tools/aapt2/link/ManifestFixer.cpp b/tools/aapt2/link/ManifestFixer.cpp
+index 9f53f5d48eea..a81c3d07a2b8 100644
+--- a/tools/aapt2/link/ManifestFixer.cpp
++++ b/tools/aapt2/link/ManifestFixer.cpp
+@@ -585,7 +585,7 @@ bool ManifestFixer::Consume(IAaptContext* context, xml::XmlResource* doc) {
+     root->InsertChild(0, std::move(uses_sdk));
+   }
+ 
+-  if (options_.compile_sdk_version) {
++  if (!options_.no_compile_sdk_metadata && options_.compile_sdk_version) {
+     xml::Attribute* attr = root->FindOrCreateAttribute(xml::kSchemaAndroid, "compileSdkVersion");
+ 
+     // Make sure we un-compile the value if it was set to something else.
+@@ -597,10 +597,9 @@ bool ManifestFixer::Consume(IAaptContext* context, xml::XmlResource* doc) {
+     // Make sure we un-compile the value if it was set to something else.
+     attr->compiled_value = {};
+     attr->value = options_.compile_sdk_version.value();
+-
+   }
+ 
+-  if (options_.compile_sdk_version_codename) {
++  if (!options_.no_compile_sdk_metadata && options_.compile_sdk_version_codename) {
+     xml::Attribute* attr =
+         root->FindOrCreateAttribute(xml::kSchemaAndroid, "compileSdkVersionCodename");
+ 
+diff --git a/tools/aapt2/link/ManifestFixer.h b/tools/aapt2/link/ManifestFixer.h
+index bcf4ec55a0fe..e5b21f324995 100644
+--- a/tools/aapt2/link/ManifestFixer.h
++++ b/tools/aapt2/link/ManifestFixer.h
+@@ -68,11 +68,12 @@ struct ManifestFixerOptions {
+   Maybe<std::string> revision_code_default;
+ 
+   // The version of the framework being compiled against to set for 'android:compileSdkVersion' in
+-  // the <manifest> tag.
++  // the <manifest> tag. Not used if no_compile_sdk_metadata is set.
+   Maybe<std::string> compile_sdk_version;
+ 
+   // The version codename of the framework being compiled against to set for
+-  // 'android:compileSdkVersionCodename' in the <manifest> tag.
++  // 'android:compileSdkVersionCodename' in the <manifest> tag. Not used if no_compile_sdk_metadata
++  // is set.
+   Maybe<std::string> compile_sdk_version_codename;
+ 
+   // Whether validation errors should be treated only as warnings. If this is 'true', then an
+@@ -85,6 +86,9 @@ struct ManifestFixerOptions {
+ 
+   // Whether to replace the manifest version with the the command line version
+   bool replace_version = false;
++
++  // Whether to suppress `android:compileSdkVersion*` and `platformBuildVersion*` attributes.
++  bool no_compile_sdk_metadata = false;
+ };
+ 
+ // Verifies that the manifest is correctly formed and inserts defaults where specified with
+diff --git a/tools/aapt2/link/ManifestFixer_test.cpp b/tools/aapt2/link/ManifestFixer_test.cpp
+index 098d0be7f87d..9204d2276a17 100644
+--- a/tools/aapt2/link/ManifestFixer_test.cpp
++++ b/tools/aapt2/link/ManifestFixer_test.cpp
+@@ -892,6 +892,35 @@ TEST_F(ManifestFixerTest, InsertCompileSdkVersions) {
+   EXPECT_THAT(attr->value, StrEq("P"));
+ }
+ 
++TEST_F(ManifestFixerTest, DoNotInsertCompileSdkVersions) {
++  std::string input = R"(<manifest package="com.pkg" />)";
++  ManifestFixerOptions options;
++  options.no_compile_sdk_metadata = true;
++  options.compile_sdk_version = {"28"};
++  options.compile_sdk_version_codename = {"P"};
++
++  std::unique_ptr<xml::XmlResource> manifest = VerifyWithOptions(input, options);
++  ASSERT_THAT(manifest, NotNull());
++
++  // There should be a declaration of kSchemaAndroid, even when the input
++  // didn't have one.
++  EXPECT_EQ(manifest->root->namespace_decls.size(), 1);
++  EXPECT_EQ(manifest->root->namespace_decls[0].prefix, "android");
++  EXPECT_EQ(manifest->root->namespace_decls[0].uri, xml::kSchemaAndroid);
++
++  xml::Attribute* attr = manifest->root->FindAttribute(xml::kSchemaAndroid, "compileSdkVersion");
++  ASSERT_THAT(attr, IsNull());
++
++  attr = manifest->root->FindAttribute(xml::kSchemaAndroid, "compileSdkVersionCodename");
++  ASSERT_THAT(attr, IsNull());
++
++  attr = manifest->root->FindAttribute("", "platformBuildVersionCode");
++  ASSERT_THAT(attr, IsNull());
++
++  attr = manifest->root->FindAttribute("", "platformBuildVersionName");
++  ASSERT_THAT(attr, IsNull());
++}
++
+ TEST_F(ManifestFixerTest, OverrideCompileSdkVersions) {
+   std::string input = R"(
+       <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="android"

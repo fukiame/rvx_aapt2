@@ -38,6 +38,8 @@ git apply patches/aapt2.patch --whitespace=fix
 git apply patches/androidfw.patch --whitespace=fix
 git apply patches/boringssl.patch --whitespace=fix
 
+git apply ext_patches/* --whitespace=fix
+
 # Define all the compilers, libraries and targets.
 api="30"
 architecture=$1

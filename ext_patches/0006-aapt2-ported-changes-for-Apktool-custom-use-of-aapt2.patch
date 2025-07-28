@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Connor Tumbleson <connor@sourcetoad.com>
+Date: Mon, 21 Mar 2022 19:45:03 -0400
+Subject: [PATCH 6/7] aapt2: ported changes for Apktool custom use of aapt2
+
+ - support private resources
+ - make static
+ - support non-empty private resources
+
+Change-Id: I1ae8b88c816ccda4ef2f440c89558a86e8278eb1
+---
+ tools/aapt2/Android.bp   | 12 ++++++++++++
+ tools/aapt2/cmd/Link.cpp | 17 +++++++++++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/tools/aapt2/Android.bp b/tools/aapt2/Android.bp
+index 50cd455c5480..179bea5b50f8 100644
+--- a/tools/aapt2/Android.bp
++++ b/tools/aapt2/Android.bp
+@@ -54,6 +54,10 @@ cc_defaults {
+         },
+         darwin: {
+             cflags: ["-D_DARWIN_UNLIMITED_STREAMS"],
++            static_libs: ["libc++_static"]
++        },
++        linux: {
++            static_libs: ["libc++_static"],
+         },
+     },
+     header_libs: ["jni_headers"],
+@@ -210,8 +214,16 @@ cc_binary_host {
+     name: "aapt2",
+     srcs: ["Main.cpp"] + toolSources,
+     use_version_lib: true,
++    stl: "libc++_static",
++    static_executable: true,
+     static_libs: ["libaapt2"],
+     defaults: ["aapt2_defaults"],
++    compile_multilib: "both",
++    multilib: {
++        lib64: {
++            suffix: "_64",
++        },
++    },
+     dist: {
+         targets: ["aapt2_artifacts"],
+     },
+diff --git a/tools/aapt2/cmd/Link.cpp b/tools/aapt2/cmd/Link.cpp
+index aa43ee07bfac..e260c70e9aa6 100644
+--- a/tools/aapt2/cmd/Link.cpp
++++ b/tools/aapt2/cmd/Link.cpp
+@@ -2427,6 +2427,23 @@ int LinkCommand::Action(const std::vector<std::string>& args) {
+     }
+   }
+ 
++  // Populate no compress extensions specified in the extensions file.
++  if (options_.extensions_to_not_compress_path) {
++    std::ifstream extensionsFile(options_.extensions_to_not_compress_path.value());
++
++    if (extensionsFile.fail()) {
++      context.GetDiagnostics()->Error(
++        DiagMessage() << "could not open extensions file "
++          << options_.extensions_to_not_compress_path.value()
++          << " for reading");
++      return 1;
++    }
++
++    for (std::string line; getline(extensionsFile, line);) {
++      options_.extensions_to_not_compress.insert(line);
++    }
++  }
++
+   // Turn off auto versioning for static-libs.
+   if (context.GetPackageType() == PackageType::kStaticLib) {
+     options_.no_auto_version = true;

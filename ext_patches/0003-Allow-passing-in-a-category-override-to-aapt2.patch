@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Meyer <jakmcbane@google.com>
+Date: Fri, 30 Sep 2022 22:22:24 +0000
+Subject: [PATCH 3/7] Allow passing in a category override to aapt2
+
+Bug: 240322840
+Test: unit test
+Change-Id: Ia605ad8ad0267b02d67da15cf65775f69aef59e5
+---
+ tools/aapt2/cmd/Link.h                  |  2 ++
+ tools/aapt2/link/ManifestFixer.cpp      | 17 +++++----
+ tools/aapt2/link/ManifestFixer.h        |  3 ++
+ tools/aapt2/link/ManifestFixer_test.cpp | 48 +++++++++++++++++++++++++
+ 4 files changed, 64 insertions(+), 6 deletions(-)
+
+diff --git a/tools/aapt2/cmd/Link.h b/tools/aapt2/cmd/Link.h
+index 6dd220515674..de90485787d0 100644
+--- a/tools/aapt2/cmd/Link.h
++++ b/tools/aapt2/cmd/Link.h
+@@ -271,6 +271,8 @@ class LinkCommand : public Command {
+         "Changes the name of the target package for overlay. Most useful\n"
+             "when used in conjunction with --rename-manifest-package.",
+         &options_.manifest_fixer_options.rename_overlay_target_package);
++    AddOptionalFlag("--rename-overlay-category", "Changes the category for the overlay.",
++                    &options_.manifest_fixer_options.rename_overlay_category);
+     AddOptionalFlagList("-0", "File suffix not to compress.",
+         &options_.extensions_to_not_compress);
+     AddOptionalFlag("-e", "File containing list of extensions not to compress.",
+diff --git a/tools/aapt2/link/ManifestFixer.cpp b/tools/aapt2/link/ManifestFixer.cpp
+index 8abd9dec56be..9f53f5d48eea 100644
+--- a/tools/aapt2/link/ManifestFixer.cpp
++++ b/tools/aapt2/link/ManifestFixer.cpp
+@@ -423,13 +423,18 @@ bool ManifestFixer::BuildRules(xml::XmlActionExecutor* executor,
+   manifest_action["attribution"]["inherit-from"];
+   manifest_action["original-package"];
+   manifest_action["overlay"].Action([&](xml::Element* el) -> bool {
+-    if (!options_.rename_overlay_target_package) {
+-      return true;
++    if (options_.rename_overlay_target_package) {
++      if (xml::Attribute* attr = el->FindAttribute(xml::kSchemaAndroid, "targetPackage")) {
++        attr->value = options_.rename_overlay_target_package.value();
++      }
+     }
+-
+-    if (xml::Attribute* attr =
+-            el->FindAttribute(xml::kSchemaAndroid, "targetPackage")) {
+-      attr->value = options_.rename_overlay_target_package.value();
++    if (options_.rename_overlay_category) {
++      if (xml::Attribute* attr = el->FindAttribute(xml::kSchemaAndroid, "category")) {
++        attr->value = options_.rename_overlay_category.value();
++      } else {
++        el->attributes.push_back(xml::Attribute{xml::kSchemaAndroid, "category",
++                                                options_.rename_overlay_category.value()});
++      }
+     }
+     return true;
+   });
+diff --git a/tools/aapt2/link/ManifestFixer.h b/tools/aapt2/link/ManifestFixer.h
+index 34ad8d586df1..bcf4ec55a0fe 100644
+--- a/tools/aapt2/link/ManifestFixer.h
++++ b/tools/aapt2/link/ManifestFixer.h
+@@ -48,6 +48,9 @@ struct ManifestFixerOptions {
+   // <overlay>.
+   Maybe<std::string> rename_overlay_target_package;
+ 
++  // The category to use instead of the one defined in 'android:category' in <overlay>.
++  std::optional<std::string> rename_overlay_category;
++
+   // The version name to set if 'android:versionName' is not defined in <manifest> or if
+   // replace_version is set.
+   Maybe<std::string> version_name_default;
+diff --git a/tools/aapt2/link/ManifestFixer_test.cpp b/tools/aapt2/link/ManifestFixer_test.cpp
+index 432f10bdab97..098d0be7f87d 100644
+--- a/tools/aapt2/link/ManifestFixer_test.cpp
++++ b/tools/aapt2/link/ManifestFixer_test.cpp
+@@ -351,6 +351,54 @@ TEST_F(ManifestFixerTest,
+   EXPECT_THAT(attr->value, StrEq("com.android"));
+ }
+ 
++TEST_F(ManifestFixerTest, AddOverlayCategory) {
++  ManifestFixerOptions options;
++  options.rename_overlay_category = std::string("category");
++
++  std::unique_ptr<xml::XmlResource> doc = VerifyWithOptions(R"EOF(
++      <manifest xmlns:android="http://schemas.android.com/apk/res/android"
++                package="android">
++        <overlay android:targetName="Customization" android:targetPackage="android" />
++      </manifest>)EOF",
++                                                            options);
++  ASSERT_THAT(doc, NotNull());
++
++  xml::Element* manifest_el = doc->root.get();
++  ASSERT_THAT(manifest_el, NotNull());
++
++  xml::Element* overlay_el = manifest_el->FindChild({}, "overlay");
++  ASSERT_THAT(overlay_el, NotNull());
++
++  xml::Attribute* attr = overlay_el->FindAttribute(xml::kSchemaAndroid, "category");
++  ASSERT_THAT(attr, NotNull());
++  EXPECT_THAT(attr->value, StrEq("category"));
++}
++
++TEST_F(ManifestFixerTest, OverrideOverlayCategory) {
++  ManifestFixerOptions options;
++  options.rename_overlay_category = std::string("category");
++
++  std::unique_ptr<xml::XmlResource> doc = VerifyWithOptions(R"EOF(
++      <manifest xmlns:android="http://schemas.android.com/apk/res/android"
++                package="android">
++        <overlay android:targetName="Customization"
++                 android:targetPackage="android"
++                 android:category="yrogetac"/>
++      </manifest>)EOF",
++                                                            options);
++  ASSERT_THAT(doc, NotNull());
++
++  xml::Element* manifest_el = doc->root.get();
++  ASSERT_THAT(manifest_el, NotNull());
++
++  xml::Element* overlay_el = manifest_el->FindChild({}, "overlay");
++  ASSERT_THAT(overlay_el, NotNull());
++
++  xml::Attribute* attr = overlay_el->FindAttribute(xml::kSchemaAndroid, "category");
++  ASSERT_THAT(attr, NotNull());
++  EXPECT_THAT(attr->value, StrEq("category"));
++}
++
+ TEST_F(ManifestFixerTest, UseDefaultVersionNameAndCode) {
+   ManifestFixerOptions options;
+   options.version_name_default = std::string("Beta");

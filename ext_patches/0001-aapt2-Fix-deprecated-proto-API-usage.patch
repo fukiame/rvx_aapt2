@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Krzysztof=20Kosi=C5=84ski?= <krzysio@google.com>
+Date: Sat, 6 Aug 2022 08:24:47 +0000
+Subject: [PATCH 1/7] aapt2: Fix deprecated proto API usage.
+
+Bug: 203713560
+Test: presubmit
+Change-Id: Ie8bb2c010cff1c2e861918496290d1ef6dd6daef
+---
+ tools/aapt2/format/Container.cpp | 4 ++--
+ tools/aapt2/io/Util.h            | 3 +--
+ 2 files changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/tools/aapt2/format/Container.cpp b/tools/aapt2/format/Container.cpp
+index 9cef7b3d2ce3..1ff6c4996b91 100644
+--- a/tools/aapt2/format/Container.cpp
++++ b/tools/aapt2/format/Container.cpp
+@@ -76,7 +76,7 @@ bool ContainerWriter::AddResTableEntry(const pb::ResourceTable& table) {
+   coded_out.WriteLittleEndian32(kResTable);
+ 
+   // Write the aligned size.
+-  const ::google::protobuf::uint64 size = table.ByteSize();
++  const size_t size = table.ByteSizeLong();
+   const int padding = CalculatePaddingForAlignment(size);
+   coded_out.WriteLittleEndian64(size);
+ 
+@@ -109,7 +109,7 @@ bool ContainerWriter::AddResFileEntry(const pb::internal::CompiledFile& file,
+   coded_out.WriteLittleEndian32(kResFile);
+ 
+   // Write the aligned size.
+-  const ::google::protobuf::uint32 header_size = file.ByteSize();
++  const size_t header_size = file.ByteSizeLong();
+   const int header_padding = CalculatePaddingForAlignment(header_size);
+   const ::google::protobuf::uint64 data_size = in->TotalSize();
+   const int data_padding = CalculatePaddingForAlignment(data_size);
+diff --git a/tools/aapt2/io/Util.h b/tools/aapt2/io/Util.h
+index 5cb8206db23c..1b48a288d255 100644
+--- a/tools/aapt2/io/Util.h
++++ b/tools/aapt2/io/Util.h
+@@ -131,8 +131,7 @@ class ProtoInputStreamReader {
+   template <typename T> bool ReadMessage(T *message) {
+     ZeroCopyInputAdaptor adapter(in_);
+     google::protobuf::io::CodedInputStream coded_stream(&adapter);
+-    coded_stream.SetTotalBytesLimit(std::numeric_limits<int32_t>::max(),
+-                                    coded_stream.BytesUntilTotalBytesLimit());
++    coded_stream.SetTotalBytesLimit(std::numeric_limits<int32_t>::max());
+     return message->ParseFromCodedStream(&coded_stream);
+   }
+ 
